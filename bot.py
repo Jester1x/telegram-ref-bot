@@ -1,6 +1,6 @@
 import os
 import logging
-import sqlite3
+import psycopg2
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackContext, CallbackQueryHandler, MessageHandler, filters
@@ -11,20 +11,29 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# Проверка токена
+# Настройки
 TOKEN = os.environ.get("BOT_TOKEN")
-REF_LINK = "https://www.tbank.ru/baf/7Yzkluz5kaS"
-SUPPORT_USERNAME = "@otututu"
-ADMIN_ID = 955084910  # ЗАМЕНИТЕ НА ВАШ USER_ID в Telegram
+REF_LINK = "ВАША_РЕФЕРАЛЬНАЯ_ССЫЛКА"  # ЗАМЕНИТЕ
+SUPPORT_USERNAME = "@ваш_username"    # ЗАМЕНИТЕ
+ADMIN_ID = 123456789                  # ЗАМЕНИТЕ НА ВАШ USER_ID
 
-# Инициализация базы данных
+# Получаем URL базы данных из переменных окружения Railway
+DATABASE_URL = os.environ.get('DATABASE_URL')
+
+# ===== БАЗА ДАННЫХ PostgreSQL =====
+
+def get_connection():
+    """Создание подключения к PostgreSQL"""
+    return psycopg2.connect(DATABASE_URL, sslmode='require')
+
 def init_db():
-    conn = sqlite3.connect('applications.db')
+    """Инициализация базы данных"""
+    conn = get_connection()
     cur = conn.cursor()
     cur.execute('''
         CREATE TABLE IF NOT EXISTS applications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
             username TEXT,
             full_name TEXT,
             screenshot_file_id TEXT,
@@ -35,67 +44,235 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
+    logging.info("✅ База данных PostgreSQL инициализирована")
 
-# Функция для добавления заявки
 def add_application(user_id, username, full_name, screenshot_file_id, contact_info):
-    conn = sqlite3.connect('applications.db')
+    """Добавление новой заявки"""
+    conn = get_connection()
     cur = conn.cursor()
     cur.execute('''
         INSERT INTO applications (user_id, username, full_name, screenshot_file_id, contact_info)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
     ''', (user_id, username, full_name, screenshot_file_id, contact_info))
     conn.commit()
     conn.close()
+    logging.info(f"✅ Заявка добавлена для пользователя {username}")
 
-# Функция для получения всех заявок
-def get_applications():
-    conn = sqlite3.connect('applications.db')
+def get_pending_applications():
+    """Получение всех ожидающих заявок"""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('SELECT * FROM applications WHERE status = %s ORDER BY created_at DESC', ('pending',))
+    applications = cur.fetchall()
+    conn.close()
+    return applications
+
+def get_all_applications():
+    """Получение всех заявок"""
+    conn = get_connection()
     cur = conn.cursor()
     cur.execute('SELECT * FROM applications ORDER BY created_at DESC')
     applications = cur.fetchall()
     conn.close()
     return applications
 
-# Функция для обновления статуса заявки
 def update_application_status(app_id, status):
-    conn = sqlite3.connect('applications.db')
+    """Обновление статуса заявки"""
+    conn = get_connection()
     cur = conn.cursor()
-    cur.execute('UPDATE applications SET status = ? WHERE id = ?', (status, app_id))
+    cur.execute('UPDATE applications SET status = %s WHERE id = %s', (status, app_id))
     conn.commit()
     conn.close()
+    logging.info(f"✅ Статус заявки #{app_id} изменен на {status}")
+
+def get_application_by_user_id(user_id):
+    """Получение заявки по user_id"""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('SELECT * FROM applications WHERE user_id = %s AND status = %s', (user_id, 'pending'))
+    application = cur.fetchone()
+    conn.close()
+    return application
+
+# ===== ОСНОВНЫЕ ФУНКЦИИ БОТА =====
+
+async def start(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    
+    welcome_text = f"""
+👋 Привет, {user.first_name}!
+
+Я помогаю получить 1000 рублей за оформление карты T-Bank Black.
+
+💰 *Как это работает:*
+• Ты получаешь 500₽ от банка за оформление карты
+• Плюс 500₽ от меня после первой покупки
+• Итого: 1000₽ на руки!
+
+📋 *Прежде чем начать, ознакомься с условиями нашего сотрудничества:*
+    """
+    
+    keyboard = [
+        [InlineKeyboardButton("📄 Показать условия", callback_data='show_terms')],
+        [InlineKeyboardButton("💬 Поддержка", url=f'https://t.me/{SUPPORT_USERNAME[1:]}')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
+
+async def show_terms(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    await query.answer()
+    
+    terms_text = """
+*✅ Условия сотрудничества и конфиденциальности*
+
+*Нажимая «Я согласен», вы подтверждаете, что:*
+
+🔒 *Политика конфиденциальности:*
+• Мы НЕ передаем ваши личные данные третьим лицам
+• Мы НЕ используем вашу информацию в корыстных целях
+• Ваш username и реквизиты для выплаты используются ИСКЛЮЧИТЕЛЬНО для учета выплат
+• Все данные удаляются после завершения наших обязательств
+
+📋 *Условия сотрудничества:*
+1. Вы действуете полностью добровольно, без принуждения
+2. Вы ознакомились с официальными условиями акции банка
+3. Вы понимаете схему вознаграждений (1000₽ вам, 2500₽ мне)
+4. Вы осознаете, что это частная инициатива, а не предложение банка
+5. Выполнение моих обязательств зависит от успешного зачисления бонуса от банка
+
+💡 *Честное партнерство, где каждый получает свою выгоду в рамках акции банка.*
+    """
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Я согласен со всеми условиями", callback_data='get_link')],
+        [InlineKeyboardButton("🔙 Назад", callback_data='back_to_start')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(terms_text, reply_markup=reply_markup, parse_mode='Markdown')
+
+async def get_link(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    await query.answer()
+    
+    instruction_text = f"""
+🎉 Отлично! Вот ваша ссылка для оформления:
+
+{REF_LINK}
+
+📝 *Инструкция:*
+1. *Оформите карту* по ссылке выше
+2. *Совершите покупку* от 500₽ (НЕ: ЖКХ, связь, переводы)
+3. *Пришлите скриншот* подтверждения покупки в этот чат
+4. *Получите 500₽* от меня в течение 24 часов после проверки
+
+⚠️ *Важно:* карта должна быть оформлена именно по этой ссылке!
+    """
+    
+    keyboard = [
+        [InlineKeyboardButton("📱 Я оформил карту и совершил покупку", callback_data='instruction')],
+        [InlineKeyboardButton("💬 Поддержка", url=f'https://t.me/{SUPPORT_USERNAME[1:]}')],
+        [InlineKeyboardButton("🔙 Назад", callback_data='show_terms')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(instruction_text, reply_markup=reply_markup, parse_mode='Markdown')
+
+async def instruction(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    await query.answer()
+    
+    instruction_text = """
+📸 *Для получения 500₽ пришлите сюда:*
+1. *Скриншот* из приложения банка, подтверждающий покупку
+2. *Ваши реквизиты* для перевода (номер карты/телефона)
+
+🕐 *Выплата производится в течение 24 часов* после проверки.
+
+❓ *Что должно быть видно на скриншоте:*
+- Дата и время операции
+- Сумма покупки (от 500₽)
+- Не видно конфиденциальных данных (замажьте CVV, полный номер карты)
+    """
+    
+    keyboard = [
+        [InlineKeyboardButton("💬 Поддержка", url=f'https://t.me/{SUPPORT_USERNAME[1:]}')],
+        [InlineKeyboardButton("🔙 Назад", callback_data='get_link')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(instruction_text, reply_markup=reply_markup, parse_mode='Markdown')
+
+async def back_to_start(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    await query.answer()
+    
+    user = query.from_user
+    welcome_text = f"""
+👋 Привет, {user.first_name}!
+
+Я помогаю получить 1000 рублей за оформление карты T-Bank Black.
+
+💰 *Как это работает:*
+• Ты получаешь 500₽ от банка за оформление карты
+• Плюс 500₽ от меня после первой покупки
+• Итого: 1000₽ на руки!
+
+📋 *Прежде чем начать, ознакомься с условиями нашего сотрудничества:*
+    """
+    
+    keyboard = [
+        [InlineKeyboardButton("📄 Показать условия", callback_data='show_terms')],
+        [InlineKeyboardButton("💬 Поддержка", url=f'https://t.me/{SUPPORT_USERNAME[1:]}')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
 
 # Обработчик скриншотов и контактной информации
 async def handle_screenshot(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     message = update.message
     
-    # Сохраняем информацию о пользователе
-    user_info = {
-        'user_id': user.id,
-        'username': user.username,
-        'full_name': user.full_name,
-        'screenshot_file_id': None,
-        'contact_info': None
-    }
-    
     # Обрабатываем скриншот (фото)
     if message.photo:
-        user_info['screenshot_file_id'] = message.photo[-1].file_id
+        # Сохраняем информацию о скриншоте
+        screenshot_file_id = message.photo[-1].file_id
+        
+        # Проверяем, есть ли уже заявка от этого пользователя
+        existing_app = get_application_by_user_id(user.id)
+        
+        if existing_app:
+            # Обновляем скриншот в существующей заявке
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute('UPDATE applications SET screenshot_file_id = %s WHERE id = %s', 
+                       (screenshot_file_id, existing_app[0]))
+            conn.commit()
+            conn.close()
+        else:
+            # Создаем новую заявку со скриншотом
+            add_application(user.id, user.username, user.full_name, screenshot_file_id, None)
+        
         await message.reply_text("✅ Скриншот получен! Теперь отправьте ваши реквизиты для перевода (номер карты или телефона).")
     
     # Обрабатываем текст (реквизиты)
     elif message.text and not message.text.startswith('/'):
-        # Проверяем, есть ли уже скриншот от этого пользователя
-        conn = sqlite3.connect('applications.db')
-        cur = conn.cursor()
-        cur.execute('SELECT * FROM applications WHERE user_id = ? AND status = "pending"', (user.id,))
-        existing_app = cur.fetchone()
-        conn.close()
+        contact_info = message.text
         
-        if existing_app:
+        # Ищем заявку пользователя
+        existing_app = get_application_by_user_id(user.id)
+        
+        if existing_app and existing_app[4]:  # Если есть заявка и скриншот
             # Обновляем реквизиты
-            user_info['contact_info'] = message.text
-            add_application(user.id, user.username, user.full_name, existing_app[4], message.text)
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute('UPDATE applications SET contact_info = %s WHERE id = %s', 
+                       (contact_info, existing_app[0]))
+            conn.commit()
+            conn.close()
             
             # Уведомляем администратора
             admin_text = f"""
@@ -103,10 +280,10 @@ async def handle_screenshot(update: Update, context: CallbackContext) -> None:
 
 👤 *Пользователь:* {user.full_name} (@{user.username})
 🆔 *ID:* {user.id}
-📞 *Реквизиты:* {message.text}
+📞 *Реквизиты:* {contact_info}
 📅 *Время:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-*Для проверки скриншота используйте команду:* /view_applications
+*Для проверки заявок используйте команду:* /view_applications
             """
             
             try:
@@ -116,10 +293,10 @@ async def handle_screenshot(update: Update, context: CallbackContext) -> None:
                     parse_mode='Markdown'
                 )
                 # Пересылаем скриншот администратору
-                await context.bot.forward_message(
+                await context.bot.send_photo(
                     chat_id=ADMIN_ID,
-                    from_chat_id=message.chat_id,
-                    message_id=existing_app[0]
+                    photo=existing_app[4],
+                    caption=f"Скриншот от @{user.username}"
                 )
             except Exception as e:
                 logging.error(f"Ошибка отправки уведомления админу: {e}")
@@ -137,7 +314,7 @@ async def view_applications(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("❌ У вас нет доступа к этой команде.")
         return
     
-    applications = get_applications()
+    applications = get_pending_applications()
     
     if not applications:
         await update.message.reply_text("📭 Нет заявок для проверки.")
@@ -172,9 +349,9 @@ async def approve_application(update: Update, context: CallbackContext) -> None:
     update_application_status(app_id, 'approved')
     
     # Получаем информацию о заявке для уведомления пользователя
-    conn = sqlite3.connect('applications.db')
+    conn = get_connection()
     cur = conn.cursor()
-    cur.execute('SELECT user_id, contact_info FROM applications WHERE id = ?', (app_id,))
+    cur.execute('SELECT user_id, contact_info FROM applications WHERE id = %s', (app_id,))
     app = cur.fetchone()
     conn.close()
     
@@ -188,8 +365,6 @@ async def approve_application(update: Update, context: CallbackContext) -> None:
             logging.error(f"Ошибка уведомления пользователя: {e}")
     
     await update.message.reply_text(f"✅ Заявка #{app_id} одобрена!")
-
-# ... остальные функции (start, show_terms, get_link, instruction, back_to_start) остаются без изменений ...
 
 def main() -> None:
     try:
