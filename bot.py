@@ -67,37 +67,6 @@ def main() -> None:
         exit(1)
 
 if __name__ == '__main__':
-    main()import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackContext, CallbackQueryHandler
-
-# Настройки
-TOKEN = os.environ.get("7942667681:AAEagO301VvUq-jJG0HvYyzxVj7JvjJp_B8")
-REF_LINK = "https://www.tbank.ru/baf/7Yzkluz5kaS"  # Замените на вашу ссылку
-
-async def start(update: Update, context: CallbackContext) -> None:
-    user = update.effective_user
-    
-    welcome_text = f"""
-👋 Привет, {user.first_name}!
-
-Я помогаю получить 1000 рублей за оформление карты T-Bank Black.
-
-💰 *Как это работает:*
-• Ты получаешь 500₽ от банка за оформление карты
-• Плюс 500₽ от меня после первой покупки
-• Итого: 1000₽ на руки!
-
-📋 *Прежде чем начать, ознакомься с условиями нашего сотрудничества:*
-    """
-    
-    keyboard = [
-        [InlineKeyboardButton("📄 Показать условия", callback_data='show_terms')],
-        [InlineKeyboardButton("💬 Поддержка", url='https://t.me/@Anastasyyla')]  # Замените на ваш username
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def show_terms(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
