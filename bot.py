@@ -13,9 +13,9 @@ logging.basicConfig(
 
 # Проверка токена
 TOKEN = os.environ.get("BOT_TOKEN")
-REF_LINK = "ВАША_РЕФЕРАЛЬНАЯ_ССЫЛКА"
-SUPPORT_USERNAME = "@ваш_username"
-ADMIN_ID = 123456789  # ЗАМЕНИТЕ НА ВАШ USER_ID в Telegram
+REF_LINK = "https://www.tbank.ru/baf/7Yzkluz5kaS"
+SUPPORT_USERNAME = "@otututu"
+ADMIN_ID = 955084910  # ЗАМЕНИТЕ НА ВАШ USER_ID в Telegram
 
 # Инициализация базы данных
 def init_db():
