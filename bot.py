@@ -14,7 +14,7 @@ logging.basicConfig(
 # Настройки
 TOKEN = os.environ.get("BOT_TOKEN")
 REF_LINK = "https://www.tbank.ru/baf/7Yzkluz5kaS"  # ЗАМЕНИТЕ
-SUPPORT_USERNAME = "@otututu"    # ЗАМЕНИТЕ
+SUPPORT_USERNAME = "@moneytreerefbot"    # ЗАМЕНИТЕ
 ADMIN_ID = 955084910                  # ЗАМЕНИТЕ НА ВАШ USER_ID
 
 # Получаем URL базы данных из переменных окружения Railway
