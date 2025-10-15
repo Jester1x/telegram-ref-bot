@@ -13,86 +13,182 @@ logging.basicConfig(
 
 # Настройки
 TOKEN = os.environ.get("BOT_TOKEN")
-REF_LINK = "https://www.tbank.ru/baf/7Yzkluz5kaS"  # ЗАМЕНИТЕ
-SUPPORT_USERNAME = "@otututu"    # ЗАМЕНИТЕ
-ADMIN_ID = 955084910                  # ЗАМЕНИТЕ НА ВАШ USER_ID
+REF_LINK = "ВАША_РЕФЕРАЛЬНАЯ_ССЫЛКА"  # ЗАМЕНИТЕ
+SUPPORT_USERNAME = "@ваш_username"    # ЗАМЕНИТЕ
+ADMIN_ID = 123456789                  # ЗАМЕНИТЕ НА ВАШ USER_ID
 
 # Получаем URL базы данных из переменных окружения Railway
 DATABASE_URL = os.environ.get('DATABASE_URL')
+
+if not DATABASE_URL:
+    logging.error("❌ DATABASE_URL не найден в переменных окружения!")
+    logging.error("Пожалуйста, создайте базу данных PostgreSQL в Railway")
+    DATABASE_URL = None
+
+if not TOKEN:
+    logging.error("❌ BOT_TOKEN не найден!")
+    exit(1)
 
 # ===== БАЗА ДАННЫХ PostgreSQL =====
 
 def get_connection():
     """Создание подключения к PostgreSQL"""
-    return psycopg2.connect(DATABASE_URL, sslmode='require')
+    if not DATABASE_URL:
+        return None
+    try:
+        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        return conn
+    except Exception as e:
+        logging.error(f"❌ Ошибка подключения к базе данных: {e}")
+        return None
 
 def init_db():
     """Инициализация базы данных"""
     conn = get_connection()
-    cur = conn.cursor()
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS applications (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT,
-            username TEXT,
-            full_name TEXT,
-            screenshot_file_id TEXT,
-            contact_info TEXT,
-            status TEXT DEFAULT 'pending',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
-    logging.info("✅ База данных PostgreSQL инициализирована")
+    if not conn:
+        logging.warning("⚠️ База данных не доступна, работаем без нее")
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS applications (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                username TEXT,
+                full_name TEXT,
+                screenshot_file_id TEXT,
+                contact_info TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, status)  -- Защита от дублирования
+            )
+        ''')
+        conn.commit()
+        conn.close()
+        logging.info("✅ База данных PostgreSQL инициализирована")
+    except Exception as e:
+        logging.error(f"❌ Ошибка инициализации базы данных: {e}")
 
 def add_application(user_id, username, full_name, screenshot_file_id, contact_info):
-    """Добавление новой заявки"""
+    """Добавление новой заявки с защитой от дублирования"""
     conn = get_connection()
-    cur = conn.cursor()
-    cur.execute('''
-        INSERT INTO applications (user_id, username, full_name, screenshot_file_id, contact_info)
-        VALUES (%s, %s, %s, %s, %s)
-    ''', (user_id, username, full_name, screenshot_file_id, contact_info))
-    conn.commit()
-    conn.close()
-    logging.info(f"✅ Заявка добавлена для пользователя {username}")
+    if not conn:
+        logging.info(f"📝 Заявка от {username} (без сохранения в БД)")
+        return True
+    
+    try:
+        cur = conn.cursor()
+        
+        # Проверяем, есть ли уже активная заявка от этого пользователя
+        cur.execute('SELECT id FROM applications WHERE user_id = %s AND status = %s', (user_id, 'pending'))
+        existing_app = cur.fetchone()
+        
+        if existing_app:
+            logging.info(f"⚠️ У пользователя {username} уже есть активная заявка #{existing_app[0]}")
+            conn.close()
+            return False
+        
+        # Добавляем новую заявку
+        cur.execute('''
+            INSERT INTO applications (user_id, username, full_name, screenshot_file_id, contact_info)
+            VALUES (%s, %s, %s, %s, %s)
+        ''', (user_id, username, full_name, screenshot_file_id, contact_info))
+        conn.commit()
+        conn.close()
+        logging.info(f"✅ Заявка добавлена для пользователя {username}")
+        return True
+    except psycopg2.IntegrityError:
+        # Обрабатываем нарушение уникальности
+        conn.rollback()
+        conn.close()
+        logging.warning(f"⚠️ Попытка создания дублирующей заявки от {username}")
+        return False
+    except Exception as e:
+        logging.error(f"❌ Ошибка добавления заявки: {e}")
+        conn.close()
+        return False
 
 def get_pending_applications():
     """Получение всех ожидающих заявок"""
     conn = get_connection()
-    cur = conn.cursor()
-    cur.execute('SELECT * FROM applications WHERE status = %s ORDER BY created_at DESC', ('pending',))
-    applications = cur.fetchall()
-    conn.close()
-    return applications
+    if not conn:
+        return []
+    
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT * FROM applications WHERE status = %s ORDER BY created_at DESC', ('pending',))
+        applications = cur.fetchall()
+        conn.close()
+        return applications
+    except Exception as e:
+        logging.error(f"❌ Ошибка получения заявок: {e}")
+        return []
 
 def get_all_applications():
     """Получение всех заявок"""
     conn = get_connection()
-    cur = conn.cursor()
-    cur.execute('SELECT * FROM applications ORDER BY created_at DESC')
-    applications = cur.fetchall()
-    conn.close()
-    return applications
+    if not conn:
+        return []
+    
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT * FROM applications ORDER BY created_at DESC')
+        applications = cur.fetchall()
+        conn.close()
+        return applications
+    except Exception as e:
+        logging.error(f"❌ Ошибка получения всех заявок: {e}")
+        return []
 
 def update_application_status(app_id, status):
     """Обновление статуса заявки"""
     conn = get_connection()
-    cur = conn.cursor()
-    cur.execute('UPDATE applications SET status = %s WHERE id = %s', (status, app_id))
-    conn.commit()
-    conn.close()
-    logging.info(f"✅ Статус заявки #{app_id} изменен на {status}")
+    if not conn:
+        return False
+    
+    try:
+        cur = conn.cursor()
+        cur.execute('UPDATE applications SET status = %s WHERE id = %s', (status, app_id))
+        conn.commit()
+        conn.close()
+        logging.info(f"✅ Статус заявки #{app_id} изменен на {status}")
+        return True
+    except Exception as e:
+        logging.error(f"❌ Ошибка обновления статуса: {e}")
+        return False
 
 def get_application_by_user_id(user_id):
     """Получение заявки по user_id"""
     conn = get_connection()
-    cur = conn.cursor()
-    cur.execute('SELECT * FROM applications WHERE user_id = %s AND status = %s', (user_id, 'pending'))
-    application = cur.fetchone()
-    conn.close()
-    return application
+    if not conn:
+        return None
+    
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT * FROM applications WHERE user_id = %s AND status = %s', (user_id, 'pending'))
+        application = cur.fetchone()
+        conn.close()
+        return application
+    except Exception as e:
+        logging.error(f"❌ Ошибка поиска заявки: {e}")
+        return None
+
+def get_application_by_id(app_id):
+    """Получение заявки по ID"""
+    conn = get_connection()
+    if not conn:
+        return None
+    
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT * FROM applications WHERE id = %s', (app_id,))
+        application = cur.fetchone()
+        conn.close()
+        return application
+    except Exception as e:
+        logging.error(f"❌ Ошибка поиска заявки по ID: {e}")
+        return None
 
 # ===== ОСНОВНЫЕ ФУНКЦИИ БОТА =====
 
@@ -231,85 +327,89 @@ async def back_to_start(update: Update, context: CallbackContext) -> None:
     
     await query.edit_message_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
 
-# Обработчик скриншотов и контактной информации
+# ===== ОБРАБОТЧИК СКРИНШОТОВ И ДАННЫХ =====
+
 async def handle_screenshot(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     message = update.message
     
     # Обрабатываем скриншот (фото)
     if message.photo:
-        # Сохраняем информацию о скриншоте
         screenshot_file_id = message.photo[-1].file_id
         
-        # Проверяем, есть ли уже заявка от этого пользователя
+        # Проверяем, нет ли уже активной заявки
         existing_app = get_application_by_user_id(user.id)
-        
         if existing_app:
-            # Обновляем скриншот в существующей заявке
-            conn = get_connection()
-            cur = conn.cursor()
-            cur.execute('UPDATE applications SET screenshot_file_id = %s WHERE id = %s', 
-                       (screenshot_file_id, existing_app[0]))
-            conn.commit()
-            conn.close()
-        else:
-            # Создаем новую заявку со скриншотом
-            add_application(user.id, user.username, user.full_name, screenshot_file_id, None)
+            await message.reply_text("❌ У вас уже есть активная заявка. Дождитесь ее проверки.")
+            return
         
-        await message.reply_text("✅ Скриншот получен! Теперь отправьте ваши реквизиты для перевода (номер карты или телефона).")
+        # Сохраняем в базе данных
+        success = add_application(user.id, user.username, user.full_name, screenshot_file_id, None)
+        
+        if success:
+            await message.reply_text("✅ Скриншот получен! Теперь отправьте ваши реквизиты для перевода (номер карты или телефона).")
+        else:
+            await message.reply_text("❌ Не удалось сохранить вашу заявку. Попробуйте позже или обратитесь в поддержку.")
     
     # Обрабатываем текст (реквизиты)
     elif message.text and not message.text.startswith('/'):
         contact_info = message.text
         
-        # Ищем заявку пользователя
+        # Ищем активную заявку пользователя
         existing_app = get_application_by_user_id(user.id)
         
-        if existing_app and existing_app[4]:  # Если есть заявка и скриншот
-            # Обновляем реквизиты
-            conn = get_connection()
-            cur = conn.cursor()
-            cur.execute('UPDATE applications SET contact_info = %s WHERE id = %s', 
-                       (contact_info, existing_app[0]))
-            conn.commit()
-            conn.close()
-            
-            # Уведомляем администратора
-            admin_text = f"""
-🚨 *НОВАЯ ЗАЯВКА*
+        if not existing_app:
+            await message.reply_text("❌ Сначала отправьте скриншот подтверждения покупки.")
+            return
+        
+        # Обновляем заявку с реквизитами
+        conn = get_connection()
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute('UPDATE applications SET contact_info = %s WHERE id = %s', 
+                           (contact_info, existing_app[0]))
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                logging.error(f"❌ Ошибка обновления реквизитов: {e}")
+                await message.reply_text("❌ Ошибка при сохранении реквизитов. Попробуйте еще раз.")
+                return
+        
+        # Уведомляем администратора
+        admin_text = f"""
+🚨 *НОВАЯ ЗАЯВКА #{existing_app[0]}*
 
 👤 *Пользователь:* {user.full_name} (@{user.username})
 🆔 *ID:* {user.id}
 📞 *Реквизиты:* {contact_info}
 📅 *Время:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-*Для проверки заявок используйте команду:* /view_applications
-            """
-            
-            try:
-                await context.bot.send_message(
-                    chat_id=ADMIN_ID,
-                    text=admin_text,
-                    parse_mode='Markdown'
-                )
-                # Пересылаем скриншот администратору
-                await context.bot.send_photo(
-                    chat_id=ADMIN_ID,
-                    photo=existing_app[4],
-                    caption=f"Скриншот от @{user.username}"
-                )
-            except Exception as e:
-                logging.error(f"Ошибка отправки уведомления админу: {e}")
-            
-            await message.reply_text("✅ Ваши данные получены! Проверка займет до 24 часов. Спасибо!")
-        else:
-            await message.reply_text("❌ Сначала отправьте скриншот подтверждения покупки.")
+*Для ответа пользователю:* https://t.me/{user.username}
+        """
+        
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=admin_text,
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📸 Посмотреть скриншот", callback_data=f'view_screenshot_{existing_app[0]}'),
+                    InlineKeyboardButton("✅ Одобрить", callback_data=f'approve_{existing_app[0]}')
+                ]])
+            )
+                
+        except Exception as e:
+            logging.error(f"❌ Ошибка отправки уведомления админу: {e}")
+        
+        await message.reply_text("✅ Ваши данные получены! Проверка займет до 24 часов. Спасибо!")
 
-# Команда для администратора - просмотр заявок
+# ===== КОМАНДЫ ДЛЯ АДМИНИСТРАТОРА =====
+
 async def view_applications(update: Update, context: CallbackContext) -> None:
+    """Просмотр всех заявок с inline кнопками"""
     user = update.effective_user
     
-    # Проверяем, является ли пользователь администратором
     if user.id != ADMIN_ID:
         await update.message.reply_text("❌ У вас нет доступа к этой команде.")
         return
@@ -320,21 +420,109 @@ async def view_applications(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("📭 Нет заявок для проверки.")
         return
     
-    text = "📋 *Список заявок:*\n\n"
     for app in applications:
-        status_emoji = "⏳" if app[6] == 'pending' else "✅" if app[6] == 'approved' else "❌"
-        text += f"{status_emoji} *Заявка #{app[0]}*\n"
-        text += f"👤 {app[3]} (@{app[2]})\n"
-        text += f"📞 {app[5]}\n"
-        text += f"📅 {app[7]}\n"
-        text += f"🆔 User ID: {app[1]}\n"
-        text += f"📊 Статус: {app[6]}\n"
-        text += "━━━━━━━━━━━━━━━━━━━━\n\n"
-    
-    await update.message.reply_text(text, parse_mode='Markdown')
+        app_id, user_id, username, full_name, screenshot_file_id, contact_info, status, created_at = app
+        
+        text = f"""
+📋 *Заявка #{app_id}*
+👤 *Пользователь:* {full_name} (@{username})
+🆔 *User ID:* {user_id}
+📞 *Реквизиты:* {contact_info if contact_info else 'Не указаны'}
+📊 *Статус:* {status}
+📅 *Дата:* {created_at.strftime('%Y-%m-%d %H:%M')}
+        """
+        
+        keyboard = []
+        
+        if screenshot_file_id:
+            keyboard.append([InlineKeyboardButton("📸 Просмотреть скриншот", callback_data=f'view_screenshot_{app_id}')])
+        
+        keyboard.extend([
+            [InlineKeyboardButton("✅ Одобрить", callback_data=f'approve_{app_id}'),
+             InlineKeyboardButton("❌ Отклонить", callback_data=f'reject_{app_id}')]
+        ])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
-# Команда для одобрения заявки
+async def view_screenshot(update: Update, context: CallbackContext) -> None:
+    """Просмотр скриншота конкретной заявки"""
+    user = update.effective_user
+    
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ У вас нет доступа к этой команде.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Укажите ID заявки: /screenshot <id>")
+        return
+    
+    app_id = context.args[0]
+    
+    app = get_application_by_id(app_id)
+    if not app:
+        await update.message.reply_text("❌ Заявка не найдена.")
+        return
+    
+    file_id, username, full_name = app[4], app[2], app[3]
+    
+    if not file_id:
+        await update.message.reply_text("❌ В этой заявке нет скриншота.")
+        return
+    
+    # Отправляем скриншот
+    await context.bot.send_photo(
+        chat_id=ADMIN_ID,
+        photo=file_id,
+        caption=f"📸 Скриншот заявки #{app_id}\n👤 {full_name} (@{username})"
+    )
+
+async def view_all_with_screenshots(update: Update, context: CallbackContext) -> None:
+    """Просмотр всех заявок со скриншотами"""
+    user = update.effective_user
+    
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ У вас нет доступа к этой команде.")
+        return
+    
+    applications = get_all_applications()
+    
+    if not applications:
+        await update.message.reply_text("📭 Нет заявок.")
+        return
+    
+    for app in applications:
+        app_id, user_id, username, full_name, screenshot_file_id, contact_info, status, created_at = app
+        
+        if not screenshot_file_id:
+            continue
+            
+        # Отправляем информацию о заявке
+        info_text = f"""
+📋 *Заявка #{app_id}*
+👤 *Пользователь:* {full_name} (@{username})
+🆔 *User ID:* {user_id}
+📞 *Реквизиты:* {contact_info if contact_info else 'Не указаны'}
+📊 *Статус:* {status}
+📅 *Дата:* {created_at.strftime('%Y-%m-%d %H:%M')}
+        """
+        
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=info_text,
+            parse_mode='Markdown'
+        )
+        
+        # Отправляем скриншот
+        await context.bot.send_photo(
+            chat_id=ADMIN_ID,
+            photo=screenshot_file_id,
+            caption=f"Скриншот заявки #{app_id}"
+        )
+
 async def approve_application(update: Update, context: CallbackContext) -> None:
+    """Одобрение заявки"""
     user = update.effective_user
     
     if user.id != ADMIN_ID:
@@ -346,29 +534,108 @@ async def approve_application(update: Update, context: CallbackContext) -> None:
         return
     
     app_id = context.args[0]
-    update_application_status(app_id, 'approved')
+    success = update_application_status(app_id, 'approved')
     
-    # Получаем информацию о заявке для уведомления пользователя
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute('SELECT user_id, contact_info FROM applications WHERE id = %s', (app_id,))
-    app = cur.fetchone()
-    conn.close()
+    if not success:
+        await update.message.reply_text("❌ Ошибка при обновлении статуса заявки.")
+        return
     
+    # Уведомляем пользователя
+    app = get_application_by_id(app_id)
     if app:
+        user_id = app[1]
         try:
             await context.bot.send_message(
-                chat_id=app[0],
+                chat_id=user_id,
                 text="🎉 Ваша заявка одобрена! Деньги будут переведены в течение 24 часов."
             )
         except Exception as e:
-            logging.error(f"Ошибка уведомления пользователя: {e}")
+            logging.error(f"❌ Ошибка уведомления пользователя: {e}")
     
     await update.message.reply_text(f"✅ Заявка #{app_id} одобрена!")
 
+async def reject_application(update: Update, context: CallbackContext) -> None:
+    """Отклонение заявки"""
+    user = update.effective_user
+    
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ У вас нет доступа к этой команде.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Укажите ID заявки: /reject <id>")
+        return
+    
+    app_id = context.args[0]
+    success = update_application_status(app_id, 'rejected')
+    
+    if not success:
+        await update.message.reply_text("❌ Ошибка при обновлении статуса заявки.")
+        return
+    
+    await update.message.reply_text(f"❌ Заявка #{app_id} отклонена!")
+
+# ===== ОБРАБОТЧИК INLINE КНОПОК =====
+
+async def button_handler(update: Update, context: CallbackContext) -> None:
+    """Обработчик inline кнопок"""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    
+    if data.startswith('view_screenshot_'):
+        app_id = data.split('_')[2]
+        
+        app = get_application_by_id(app_id)
+        if not app or not app[4]:
+            await query.edit_message_text("❌ Скриншот не найден.")
+            return
+        
+        file_id, username, full_name = app[4], app[2], app[3]
+        
+        # Отправляем скриншот отдельным сообщением
+        await context.bot.send_photo(
+            chat_id=ADMIN_ID,
+            photo=file_id,
+            caption=f"📸 Скриншот заявки #{app_id}\n👤 {full_name} (@{username})"
+        )
+    
+    elif data.startswith('approve_'):
+        app_id = data.split('_')[1]
+        success = update_application_status(app_id, 'approved')
+        
+        if success:
+            # Уведомляем пользователя
+            app = get_application_by_id(app_id)
+            if app:
+                user_id = app[1]
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text="🎉 Ваша заявка одобрена! Деньги будут переведены в течение 24 часов."
+                    )
+                except Exception as e:
+                    logging.error(f"❌ Ошибка уведомления пользователя: {e}")
+            
+            await query.edit_message_text(f"✅ Заявка #{app_id} одобрена!")
+        else:
+            await query.edit_message_text("❌ Ошибка при одобрении заявки.")
+    
+    elif data.startswith('reject_'):
+        app_id = data.split('_')[1]
+        success = update_application_status(app_id, 'rejected')
+        
+        if success:
+            await query.edit_message_text(f"❌ Заявка #{app_id} отклонена!")
+        else:
+            await query.edit_message_text("❌ Ошибка при отклонении заявки.")
+
+# ===== ОСНОВНАЯ ФУНКЦИЯ =====
+
 def main() -> None:
     try:
-        # Инициализируем базу данных
+        # Инициализируем базу данных (если доступна)
         init_db()
         
         logging.info("🚀 Запуск бота...")
@@ -377,13 +644,17 @@ def main() -> None:
         # Обработчики команд
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("view_applications", view_applications))
+        application.add_handler(CommandHandler("screenshot", view_screenshot))
+        application.add_handler(CommandHandler("all_screenshots", view_all_with_screenshots))
         application.add_handler(CommandHandler("approve", approve_application))
+        application.add_handler(CommandHandler("reject", reject_application))
         
         # Обработчики callback-кнопок
         application.add_handler(CallbackQueryHandler(show_terms, pattern='show_terms'))
         application.add_handler(CallbackQueryHandler(get_link, pattern='get_link'))
         application.add_handler(CallbackQueryHandler(instruction, pattern='instruction'))
         application.add_handler(CallbackQueryHandler(back_to_start, pattern='back_to_start'))
+        application.add_handler(CallbackQueryHandler(button_handler))
         
         # Обработчик медиа-сообщений (скриншоты и текст)
         application.add_handler(MessageHandler(filters.PHOTO | filters.TEXT & ~filters.COMMAND, handle_screenshot))
@@ -397,110 +668,3 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-    # Команда для просмотра скриншота конкретной заявки
-async def view_screenshot(update: Update, context: CallbackContext) -> None:
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ У вас нет доступа к этой команде.")
-        return
-    
-    if not context.args:
-        await update.message.reply_text("❌ Укажите ID заявки: /screenshot <id>")
-        return
-    
-    app_id = context.args[0]
-    
-    conn = get_connection()
-    if not conn:
-        await update.message.reply_text("❌ База данных не доступна.")
-        return
-    
-    try:
-        cur = conn.cursor()
-        cur.execute('SELECT screenshot_file_id, username, full_name FROM applications WHERE id = %s', (app_id,))
-        result = cur.fetchone()
-        conn.close()
-        
-        if not result:
-            await update.message.reply_text("❌ Заявка не найдена.")
-            return
-        
-        file_id, username, full_name = result
-        
-        if not file_id:
-            await update.message.reply_text("❌ В этой заявке нет скриншота.")
-            return
-        
-        # Отправляем скриншот
-        await context.bot.send_photo(
-            chat_id=ADMIN_ID,
-            photo=file_id,
-            caption=f"📸 Скриншот заявки #{app_id}\n👤 {full_name} (@{username})"
-        )
-        
-    except Exception as e:
-        logging.error(f"❌ Ошибка получения скриншота: {e}")
-        await update.message.reply_text("❌ Ошибка при получении скриншота.")
-
-# Команда для просмотра всех заявок со скриншотами
-async def view_all_with_screenshots(update: Update, context: CallbackContext) -> None:
-    user = update.effective_user
-    
-    if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ У вас нет доступа к этой команде.")
-        return
-    
-    conn = get_connection()
-    if not conn:
-        await update.message.reply_text("❌ База данных не доступна.")
-        return
-    
-    try:
-        cur = conn.cursor()
-        cur.execute('''
-            SELECT id, user_id, username, full_name, screenshot_file_id, contact_info, status, created_at 
-            FROM applications 
-            WHERE screenshot_file_id IS NOT NULL 
-            ORDER BY created_at DESC
-        ''')
-        applications = cur.fetchall()
-        conn.close()
-        
-        if not applications:
-            await update.message.reply_text("📭 Нет заявок со скриншотами.")
-            return
-        
-        for app in applications:
-            app_id, user_id, username, full_name, screenshot_file_id, contact_info, status, created_at = app
-            
-            # Отправляем информацию о заявке
-            info_text = f"""
-📋 *Заявка #{app_id}*
-👤 *Пользователь:* {full_name} (@{username})
-🆔 *User ID:* {user_id}
-📞 *Реквизиты:* {contact_info if contact_info else 'Не указаны'}
-📊 *Статус:* {status}
-📅 *Дата:* {created_at.strftime('%Y-%m-%d %H:%M')}
-            """
-            
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=info_text,
-                parse_mode='Markdown'
-            )
-            
-            # Отправляем скриншот
-            await context.bot.send_photo(
-                chat_id=ADMIN_ID,
-                photo=screenshot_file_id,
-                caption=f"Скриншот заявки #{app_id}"
-            )
-            
-            # Небольшая пауза между сообщениями
-            import time
-            time.sleep(1)
-            
-    except Exception as e:
-        logging.error(f"❌ Ошибка получения заявок: {e}")
-        await update.message.reply_text("❌ Ошибка при получении заявок.")
