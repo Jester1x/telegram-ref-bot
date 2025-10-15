@@ -13,9 +13,9 @@ logging.basicConfig(
 
 # Настройки
 TOKEN = os.environ.get("BOT_TOKEN")
-REF_LINK = "ВАША_РЕФЕРАЛЬНАЯ_ССЫЛКА"  # ЗАМЕНИТЕ
-SUPPORT_USERNAME = "@ваш_username"    # ЗАМЕНИТЕ
-ADMIN_ID = 123456789                  # ЗАМЕНИТЕ НА ВАШ USER_ID
+REF_LINK = "https://www.tbank.ru/baf/7Yzkluz5kaS"  # ЗАМЕНИТЕ
+SUPPORT_USERNAME = "@otututu"    # ЗАМЕНИТЕ
+ADMIN_ID = 955084910                  # ЗАМЕНИТЕ НА ВАШ USER_ID
 
 # Получаем URL базы данных из переменных окружения Railway
 DATABASE_URL = os.environ.get('DATABASE_URL')
