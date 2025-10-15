@@ -263,7 +263,7 @@ async def get_link(update: Update, context: CallbackContext) -> None:
     await query.answer()
     
     instruction_text = f"""
-🎉 Отлично! Вот ваша ссылка для оформления:
+>>> Отлично! Вот ваша ссылка для оформления:
 
 {REF_LINK}
 
