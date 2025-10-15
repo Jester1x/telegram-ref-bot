@@ -1,4 +1,73 @@
 import os
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackContext, CallbackQueryHandler
+
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+    level=logging.INFO
+)
+
+# Проверка токена
+TOKEN = os.environ.get("BOT_TOKEN")
+REF_LINK = "https://www.tbank.ru/baf/7Yzkluz5kaS"  # Замените на вашу ссылку
+
+# Добавьте эту проверку ДО создания приложения
+if not TOKEN:
+    logging.error("❌ BOT_TOKEN не найден в переменных окружения!")
+    logging.error("Пожалуйста, установите переменную BOT_TOKEN в настройках Railway")
+    exit(1)
+
+logging.info(f"✅ Токен получен. Длина: {len(TOKEN)} символов")
+
+# ... остальной код без изменений ...
+async def start(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    
+    welcome_text = f"""
+👋 Привет, {user.first_name}!
+
+Я помогаю получить 1000 рублей за оформление карты T-Bank Black.
+
+💰 *Как это работает:*
+• Ты получаешь 500₽ от банка за оформление карты
+• Плюс 500₽ от меня после первой покупки
+• Итого: 1000₽ на руки!
+
+📋 *Прежде чем начать, ознакомься с условиями нашего сотрудничества:*
+    """
+    
+    keyboard = [
+        [InlineKeyboardButton("📄 Показать условия", callback_data='show_terms')],
+        [InlineKeyboardButton("💬 Поддержка", url='https://t.me/your_username')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
+
+# ... остальные функции без изменений ...
+
+def main() -> None:
+    try:
+        logging.info("🚀 Запуск бота...")
+        application = Application.builder().token(TOKEN).build()
+        
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CallbackQueryHandler(show_terms, pattern='show_terms'))
+        application.add_handler(CallbackQueryHandler(get_link, pattern='get_link'))
+        application.add_handler(CallbackQueryHandler(instruction, pattern='instruction'))
+        application.add_handler(CallbackQueryHandler(back_to_start, pattern='back_to_start'))
+        
+        logging.info("✅ Бот успешно запущен и ожидает сообщений")
+        application.run_polling()
+        
+    except Exception as e:
+        logging.error(f"❌ Ошибка при запуске бота: {e}")
+        exit(1)
+
+if __name__ == '__main__':
+    main()import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackContext, CallbackQueryHandler
 
