@@ -397,3 +397,110 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+    # Команда для просмотра скриншота конкретной заявки
+async def view_screenshot(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ У вас нет доступа к этой команде.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Укажите ID заявки: /screenshot <id>")
+        return
+    
+    app_id = context.args[0]
+    
+    conn = get_connection()
+    if not conn:
+        await update.message.reply_text("❌ База данных не доступна.")
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT screenshot_file_id, username, full_name FROM applications WHERE id = %s', (app_id,))
+        result = cur.fetchone()
+        conn.close()
+        
+        if not result:
+            await update.message.reply_text("❌ Заявка не найдена.")
+            return
+        
+        file_id, username, full_name = result
+        
+        if not file_id:
+            await update.message.reply_text("❌ В этой заявке нет скриншота.")
+            return
+        
+        # Отправляем скриншот
+        await context.bot.send_photo(
+            chat_id=ADMIN_ID,
+            photo=file_id,
+            caption=f"📸 Скриншот заявки #{app_id}\n👤 {full_name} (@{username})"
+        )
+        
+    except Exception as e:
+        logging.error(f"❌ Ошибка получения скриншота: {e}")
+        await update.message.reply_text("❌ Ошибка при получении скриншота.")
+
+# Команда для просмотра всех заявок со скриншотами
+async def view_all_with_screenshots(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ У вас нет доступа к этой команде.")
+        return
+    
+    conn = get_connection()
+    if not conn:
+        await update.message.reply_text("❌ База данных не доступна.")
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute('''
+            SELECT id, user_id, username, full_name, screenshot_file_id, contact_info, status, created_at 
+            FROM applications 
+            WHERE screenshot_file_id IS NOT NULL 
+            ORDER BY created_at DESC
+        ''')
+        applications = cur.fetchall()
+        conn.close()
+        
+        if not applications:
+            await update.message.reply_text("📭 Нет заявок со скриншотами.")
+            return
+        
+        for app in applications:
+            app_id, user_id, username, full_name, screenshot_file_id, contact_info, status, created_at = app
+            
+            # Отправляем информацию о заявке
+            info_text = f"""
+📋 *Заявка #{app_id}*
+👤 *Пользователь:* {full_name} (@{username})
+🆔 *User ID:* {user_id}
+📞 *Реквизиты:* {contact_info if contact_info else 'Не указаны'}
+📊 *Статус:* {status}
+📅 *Дата:* {created_at.strftime('%Y-%m-%d %H:%M')}
+            """
+            
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=info_text,
+                parse_mode='Markdown'
+            )
+            
+            # Отправляем скриншот
+            await context.bot.send_photo(
+                chat_id=ADMIN_ID,
+                photo=screenshot_file_id,
+                caption=f"Скриншот заявки #{app_id}"
+            )
+            
+            # Небольшая пауза между сообщениями
+            import time
+            time.sleep(1)
+            
+    except Exception as e:
+        logging.error(f"❌ Ошибка получения заявок: {e}")
+        await update.message.reply_text("❌ Ошибка при получении заявок.")
